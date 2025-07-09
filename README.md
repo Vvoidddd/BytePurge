@@ -1,4 +1,3 @@
-````markdown
 # BytePurge
 
 ![BytePurge Logo](BytePurge.png)
@@ -7,36 +6,30 @@ BytePurge is a lightweight, user-friendly desktop application designed to help u
 
 ## Features
 
-- **Multi-threaded folder scanning** for fast, efficient cleanup.  
-- **File scoring system** based on age and extension to highlight files safe for removal.  
-- **Interactive GUI** to select folders, view file details, and delete files.  
-- **Live CPU and GPU usage monitoring** shown in the window title.  
-- **Export and clear logs** for audit and tracking.  
-- **Progress bars and detailed status messages** for clear user feedback.
+* **Multi-threaded folder scanning** for fast, efficient cleanup.
+* **File scoring system** based on age and extension to highlight files safe for removal.
+* **Interactive GUI** to select folders, view file details, and delete files.
+* **Live CPU and GPU usage monitoring** shown in the window title.
+* **Export and clear logs** for audit and tracking.
+* **Progress bars and detailed status messages** for clear user feedback.
 
 ### Source Code
 
-- [GitHub Repository](https://github.com/Vvoidddd/BytePurge)
+* [GitHub Repository](https://github.com/Vvoidddd/BytePurge)
 
 ## Requirements
 
-- Windows 10 or higher  
-- Python 3.7+  
-- Packages: `pyqt6`, `psutil`, `gputil`
+* Windows 10 or higher
+* Python 3.7+
+* Packages: `pyqt6`, `psutil`, `gputil`
 
 ## Installation
 
-1. **Run `installer.bat`** included to automatically install dependencies and launch the app.  
-2. Or install packages manually:  
-   ```bash
+1. Run **installer.bat** included to automatically install dependencies and launch the app.
+2. Or install packages manually:
    python -m pip install pyqt6 psutil gputil
-````
-
 3. Launch the app:
-
-   ```bash
    python main.py
-   ```
 
 ## Usage
 
@@ -49,4 +42,3 @@ BytePurge is a lightweight, user-friendly desktop application designed to help u
 ## Contributing
 
 Contributions and suggestions are welcome. Please open issues or pull requests on the GitHub repository.
-
