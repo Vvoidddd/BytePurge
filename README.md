@@ -1,0 +1,2 @@
+# BytePurge
+BytePurge is a lightweight, user-friendly desktop application designed to help users identify and safely remove unnecessary files from their system. Using an intelligent scoring system based on file age and type, it prioritizes files that are likely to be safe for deletion—such as old executables, archives, logs, and temporary files—helping free up valuable disk space without the risk of removing important data.
