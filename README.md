@@ -1,3 +1,4 @@
+````markdown
 # BytePurge
 
 ![BytePurge Logo](BytePurge.png)
