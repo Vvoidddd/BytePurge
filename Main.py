@@ -5,6 +5,10 @@ import os
 import time
 import psutil
 import GPUtil
+import requests
+import shutil
+import re
+from packaging.version import Version
 from datetime import datetime
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
@@ -20,14 +24,72 @@ from PyQt6.QtGui import QIcon
 LOG_FILE = "bytepurge.log"
 EXTENSIONS = {'.exe', '.msi', '.zip', '.rar', '.tmp', '.log'}
 
-def log(msg):
+REPO_USER = "Vvoidddd"
+REPO_NAME = "BytePurge"
+BRANCH = "Main"
+FILES = ["Main.py", "scanner.py", "remover.py"]
+REMOTE_RAW_BASE = f"https://raw.githubusercontent.com/{REPO_USER}/{REPO_NAME}/{BRANCH}/"
+VERSION_PATTERN = re.compile(r"__version__\s*=\s*['\"]([^'\"]+)['\"]")
+TIMEOUT = 10
+
+def log(msg: str) -> None:
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] {msg}\n")
 
 def format_time(ts: float) -> str:
     return datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
 
-def get_score(path: Path, stat, aggressive=False) -> float:
+def fetch_remote_version() -> str:
+    url = REMOTE_RAW_BASE + "Main.py"
+    r = requests.get(url, timeout=TIMEOUT)
+    r.raise_for_status()
+    m = VERSION_PATTERN.search(r.text)
+    if not m:
+        raise RuntimeError("No __version__ found remotely in Main.py")
+    return m.group(1)
+
+def fetch_local_version() -> str:
+    with open("Main.py", "r", encoding="utf-8") as f:
+        content = f.read()
+    m = VERSION_PATTERN.search(content)
+    if not m:
+        raise RuntimeError("No __version__ found locally in Main.py")
+    return m.group(1)
+
+def download_file(filename: str) -> bytes:
+    url = REMOTE_RAW_BASE + filename
+    r = requests.get(url, timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.content
+
+def run_updater() -> None:
+    try:
+        remote_ver = Version(fetch_remote_version())
+        local_ver = Version(fetch_local_version())
+    except Exception as e:
+        log(f"Updater error: {e}")
+        return
+
+    if remote_ver <= local_ver:
+        log(f"Up-to-date (v{local_ver}). No update needed.")
+        return
+
+    log(f"Updating from v{local_ver} → v{remote_ver}...")
+
+    for fn in FILES:
+        log(f"Downloading {fn}...")
+        data = download_file(fn)
+        bak = fn + ".old"
+        if os.path.exists(fn):
+            shutil.copy2(fn, bak)
+        with open(fn, "wb") as f:
+            f.write(data)
+
+    log("Update complete. Please restart the application.")
+    print("Update complete. Please restart the application.")
+    sys.exit(0)
+
+def get_score(path: Path, stat, aggressive: bool = False) -> float:
     now = time.time()
     age_days = max(0.0, (now - stat.st_mtime) / 86400.0)
     score = min(age_days / 30.0, 10.0) * 5
@@ -35,7 +97,7 @@ def get_score(path: Path, stat, aggressive=False) -> float:
         score += 10.0
     return score
 
-def process_file(path: Path, min_age_days, aggressive, min_size_mb):
+def process_file(path: Path, min_age_days: int, aggressive: bool, min_size_mb: int):
     try:
         stat = path.stat()
         age_days = (time.time() - stat.st_mtime) / 86400.0
@@ -54,7 +116,7 @@ def process_file(path: Path, min_age_days, aggressive, min_size_mb):
     except Exception:
         return None
 
-def scan_folder(folder: str, min_age_days=0, aggressive=False, min_size_mb=0):
+def scan_folder(folder: str, min_age_days: int = 0, aggressive: bool = False, min_size_mb: int = 0):
     files = [Path(root) / f for root, _, fs in os.walk(folder) for f in fs]
     results = []
     with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
@@ -65,7 +127,7 @@ def scan_folder(folder: str, min_age_days=0, aggressive=False, min_size_mb=0):
                 results.append(r)
     return results
 
-def parallel_delete_files(file_paths):
+def parallel_delete_files(file_paths: list[str]) -> tuple[list[str], list[str]]:
     removed, failed = [], []
     def delete(path):
         try:
@@ -96,7 +158,7 @@ class ScanWorker(QThread):
     progress = pyqtSignal(int)
     result = pyqtSignal(list, str)
 
-    def __init__(self, folders, min_age, aggressive, min_size):
+    def __init__(self, folders: list[str], min_age: int, aggressive: bool, min_size: int):
         super().__init__()
         self.folders = folders
         self.min_age = min_age
@@ -125,8 +187,8 @@ class BytePurgeUI(QWidget):
         self.setMinimumSize(1000, 600)
         self.setWindowTitle("BytePurge")
 
-        self.folder_paths = []
-        self.entries = set()
+        self.folder_paths: list[str] = []
+        self.entries: set[str] = set()
 
         self.title_timer = QTimer(self)
         self.title_timer.timeout.connect(self.update_title_with_usage)
@@ -282,6 +344,7 @@ class BytePurgeUI(QWidget):
 
 if __name__ == "__main__":
     log("===== BytePurge Started =====")
+    run_updater()
     app = QApplication(sys.argv)
     ui = BytePurgeUI()
     ui.show()
