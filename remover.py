@@ -43,7 +43,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # configure logging
     handlers = [logging.StreamHandler(sys.stderr)]
     if args.log_deleted:
         handlers.append(logging.FileHandler(args.log_deleted))
@@ -56,7 +55,6 @@ def main():
     max_workers = args.workers or max(1, os.cpu_count() // 2)
     removed, failed = remove_files(args.files, args.dry_run, max_workers)
 
-    # summary to stdout
     print(f"Removed: {len(removed)}")
     if failed:
         print(f"Failed : {len(failed)}", file=sys.stderr)

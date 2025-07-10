@@ -45,7 +45,7 @@ def process_file(path: Path, min_age: int, min_size: float, aggressive: bool):
 
 def scan_folder(folder: Path, min_age: int, min_size: float, aggressive: bool):
     results = []
-    all_files = [folder / f for root, _, files in os.walk(folder) for f in files for folder in [Path(root)]]
+    all_files = [Path(root) / f for root, _, files in os.walk(folder) for f in files]
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = [
             pool.submit(process_file, path, min_age, min_size, aggressive)
@@ -75,7 +75,6 @@ def main():
         sys.exit(1)
 
     results = scan_folder(folder, args.min_age, args.min_size, args.aggressive)
-    # apply min_score filter
     results = [r for r in results if r["Score"] >= args.min_score]
 
     if args.json:

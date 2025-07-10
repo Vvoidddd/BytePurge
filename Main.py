@@ -1,3 +1,5 @@
+__version__ = "1.3"
+
 import sys
 import os
 import time
@@ -15,7 +17,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QIcon
 
-# Shared constants
 LOG_FILE = "bytepurge.log"
 EXTENSIONS = {'.exe', '.msi', '.zip', '.rar', '.tmp', '.log'}
 
@@ -166,14 +167,12 @@ class BytePurgeUI(QWidget):
 
         layout.addLayout(btns)
 
-        # Filters
         filters = QHBoxLayout()
         self.chk_aggressive = QCheckBox("Aggressive Mode")
         self.chk_fullpath = QCheckBox("Show Full Path")
         self.spin_age = QSpinBox()
         self.spin_age.setRange(0, 999)
         self.spin_age.setPrefix("Min Age (days): ")
-
         self.spin_size = QSpinBox()
         self.spin_size.setRange(0, 10000)
         self.spin_size.setPrefix("Min Size (MB): ")
@@ -280,7 +279,6 @@ class BytePurgeUI(QWidget):
             QMessageBox.information(self, "Log Cleared", "Log cleared.")
         except Exception as ex:
             QMessageBox.critical(self, "Clear Failed", str(ex))
-
 
 if __name__ == "__main__":
     log("===== BytePurge Started =====")
