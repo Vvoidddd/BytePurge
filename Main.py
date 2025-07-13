@@ -1,4 +1,4 @@
-__version__ = "1.3"
+__version__ = "1.4"
 
 import sys
 import os
@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QSpinBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QColor, QPalette, QIcon
 
 LOG_FILE = "bytepurge.log"
 EXTENSIONS = {'.exe', '.msi', '.zip', '.rar', '.tmp', '.log'}
@@ -31,6 +31,11 @@ FILES = ["Main.py", "scanner.py", "remover.py"]
 REMOTE_RAW_BASE = f"https://raw.githubusercontent.com/{REPO_USER}/{REPO_NAME}/{BRANCH}/"
 VERSION_PATTERN = re.compile(r"__version__\s*=\s*['\"]([^'\"]+)['\"]")
 TIMEOUT = 10
+
+GAME_KEYWORDS = {
+    "cod", "call of duty", "steamapps", "epic games", "battle.net", "origin",
+    "riot games", "games", "game", "gog galaxy", "blizzard", "ubisoft", "rockstar games"
+}
 
 def log(msg: str) -> None:
     with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -89,6 +94,10 @@ def run_updater() -> None:
     print("Update complete. Please restart the application.")
     sys.exit(0)
 
+def is_game_related(path: Path) -> bool:
+    path_str = str(path).lower()
+    return any(keyword in path_str for keyword in GAME_KEYWORDS)
+
 def get_score(path: Path, stat, aggressive: bool = False) -> float:
     now = time.time()
     age_days = max(0.0, (now - stat.st_mtime) / 86400.0)
@@ -99,6 +108,8 @@ def get_score(path: Path, stat, aggressive: bool = False) -> float:
 
 def process_file(path: Path, min_age_days: int, aggressive: bool, min_size_mb: int):
     try:
+        if is_game_related(path):
+            return None
         stat = path.stat()
         age_days = (time.time() - stat.st_mtime) / 86400.0
         if age_days < min_age_days:
@@ -106,12 +117,13 @@ def process_file(path: Path, min_age_days: int, aggressive: bool, min_size_mb: i
         size_mb = stat.st_size / (1024 ** 2)
         if size_mb < min_size_mb:
             return None
+        score = get_score(path, stat, aggressive)
         return {
             "FullPath": str(path),
             "Name": path.name,
             "SizeMB": f"{size_mb:.2f}",
             "LastModified": format_time(stat.st_mtime),
-            "Score": f"{get_score(path, stat, aggressive):.1f}"
+            "Score": score
         }
     except Exception:
         return None
@@ -180,11 +192,21 @@ class ScanWorker(QThread):
             self.progress.emit(int(((idx + 1) / total) * 100))
         self.result.emit(all_results, None)
 
+class ColorBox(QLabel):
+    def __init__(self, color: QColor, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(20, 20)
+        self.setAutoFillBackground(True)
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, color)
+        self.setPalette(palette)
+        self.setToolTip("Removal Probability Indicator")
+
 class BytePurgeUI(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowIcon(QIcon("BytePurge.png"))
-        self.setMinimumSize(1000, 600)
+        self.setMinimumSize(1100, 600)
         self.setWindowTitle("BytePurge")
 
         self.folder_paths: list[str] = []
@@ -202,8 +224,10 @@ class BytePurgeUI(QWidget):
         self.folder_label = QLabel("No folder(s) selected")
         layout.addWidget(self.folder_label)
 
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Name", "Size (MB)", "Last Modified", "Score", "Full Path"])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels([
+            "Name", "Size (MB)", "Last Modified", "Score", "Removal Probability", "Full Path"
+        ])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionMode(self.table.SelectionMode.MultiSelection)
@@ -232,6 +256,9 @@ class BytePurgeUI(QWidget):
         filters = QHBoxLayout()
         self.chk_aggressive = QCheckBox("Aggressive Mode")
         self.chk_fullpath = QCheckBox("Show Full Path")
+        self.chk_fullpath.setChecked(True)
+        self.chk_fullpath.stateChanged.connect(self.toggle_fullpath_column)
+
         self.spin_age = QSpinBox()
         self.spin_age.setRange(0, 999)
         self.spin_age.setPrefix("Min Age (days): ")
@@ -294,24 +321,56 @@ class BytePurgeUI(QWidget):
     def add_row(self, data):
         row = self.table.rowCount()
         self.table.insertRow(row)
+
         self.table.setItem(row, 0, QTableWidgetItem(data["Name"]))
         self.table.setItem(row, 1, QTableWidgetItem(data["SizeMB"]))
         self.table.setItem(row, 2, QTableWidgetItem(data["LastModified"]))
-        self.table.setItem(row, 3, QTableWidgetItem(data["Score"]))
-        self.table.setItem(row, 4, QTableWidgetItem(data["FullPath"] if self.chk_fullpath.isChecked() else ""))
+        score_str = f"{data['Score']:.1f}"
+        self.table.setItem(row, 3, QTableWidgetItem(score_str))
+
+        score = data["Score"]
+        if score >= 15:
+            color = QColor(255, 0, 0)  # Red
+        elif score >= 7:
+            color = QColor(255, 165, 0)  # Orange
+        else:
+            color = None
+
+        if color:
+            self.table.setCellWidget(row, 4, ColorBox(color))
+        else:
+            self.table.setCellWidget(row, 4, QLabel(""))
+
+        fullpath_text = data["FullPath"] if self.chk_fullpath.isChecked() else ""
+        self.table.setItem(row, 5, QTableWidgetItem(fullpath_text))
+
+    def toggle_fullpath_column(self):
+        show = self.chk_fullpath.isChecked()
+        col = 5
+        self.table.setColumnHidden(col, not show)
+        # Adjust full path cell texts if toggled
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, col)
+            if item:
+                if show and not item.text():
+                    # restore full path stored in item's data (if any)
+                    # but here we have no stored data, so do nothing
+                    pass
+                elif not show:
+                    item.setText("")
 
     def delete_selected(self):
         rows = sorted({i.row() for i in self.table.selectedItems()}, reverse=True)
         if not rows:
             QMessageBox.warning(self, "No Selection", "Select files to delete.")
             return
-        paths = [self.table.item(r, 4).text() for r in rows]
+        paths = [self.table.item(r, 5).text() for r in rows if self.table.item(r, 5)]
         if QMessageBox.question(self, "Confirm", f"Delete {len(paths)} files permanently?",
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         removed, failed = parallel_delete_files(paths)
         for r in rows:
-            path = self.table.item(r, 4).text()
+            path = self.table.item(r, 5).text()
             if path in removed:
                 self.table.removeRow(r)
         log(f"Deleted: {len(removed)} files; Failed: {len(failed)}")
@@ -341,6 +400,7 @@ class BytePurgeUI(QWidget):
             QMessageBox.information(self, "Log Cleared", "Log cleared.")
         except Exception as ex:
             QMessageBox.critical(self, "Clear Failed", str(ex))
+
 
 if __name__ == "__main__":
     log("===== BytePurge Started =====")
