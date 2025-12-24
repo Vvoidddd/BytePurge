@@ -1,96 +1,86 @@
 import os
-import sys
-import csv
-import json
 import time
-import argparse
 from pathlib import Path
-from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from utils import hash_file, is_system_path
 
-EXTENSIONS = {'.exe', '.msi', '.zip', '.rar', '.tmp', '.log'}
+MAX_WORKERS = min(os.cpu_count() or 4, 8)
+
 GAME_KEYWORDS = {
-    "cod", "call of duty", "steamapps", "epic games", "battle.net",
-    "origin", "riot games", "games", "game", "gog galaxy",
-    "blizzard", "ubisoft", "rockstar games"
+    "steamapps", "epic games", "battle.net", "riot games",
+    "gog galaxy", "blizzard", "ubisoft", "rockstar"
 }
-MAX_WORKERS = max(4, os.cpu_count() or 1)
 
-def is_game_related(path: Path) -> bool:
-    lower = str(path).lower()
-    return any(keyword in lower for keyword in GAME_KEYWORDS)
+def is_game_related(path: Path, strict: bool) -> bool:
+    if not strict:
+        return False
+    p = str(path).lower()
+    return any(k in p for k in GAME_KEYWORDS)
 
-def format_time(ts: float) -> str:
-    return datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
+def score_file(path: Path, stat, aggressive, weights):
+    age_days = (time.time() - stat.st_mtime) / 86400
+    score = min(age_days / 30, 10) * 5
+    score += weights.get(path.suffix.lower(), 0)
+    if aggressive:
+        score += 5
+    return round(score, 1)
 
-def get_score(path: Path, stat, aggressive: bool) -> float:
-    age_days = max(0.0, (time.time() - stat.st_mtime) / 86400.0)
-    score = min(age_days / 30.0, 10.0) * 5
-    if aggressive or path.suffix.lower() in EXTENSIONS:
-        score += 10.0
-    return score
-
-def process_file(path: Path, min_age: int, min_size: float, aggressive: bool):
-    try:
-        if is_game_related(path):
-            return None
-        stat = path.stat()
-        age_days = (time.time() - stat.st_mtime) / 86400.0
-        if age_days < min_age:
-            return None
-        size_mb = stat.st_size / (1024 ** 2)
-        if size_mb < min_size:
-            return None
-        return {
-            "Name": path.name,
-            "FullPath": str(path),
-            "SizeMB": round(size_mb, 2),
-            "LastModified": format_time(stat.st_mtime),
-            "Score": round(get_score(path, stat, aggressive), 1)
-        }
-    except Exception:
-        return None
-
-def scan_folder(folder: Path, min_age: int, min_size: float, aggressive: bool) -> list:
-    all_files = [Path(root) / name for root, _, files in os.walk(folder) for name in files]
+def scan_folder(folders, config, progress_cb=None, cancel_flag=None):
     results = []
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = [pool.submit(process_file, f, min_age, min_size, aggressive) for f in all_files]
-        for fut in as_completed(futures):
+    seen_hashes = {}
+    files = []
+
+    if isinstance(folders, (str, Path)):
+        folders = [folders]
+
+    for folder in folders:
+        for root, _, fs in os.walk(folder):
+            for f in fs:
+                p = Path(root) / f
+                if is_system_path(p):
+                    continue
+                files.append(p)
+
+    total = len(files)
+
+    def worker(path):
+        if cancel_flag and cancel_flag():
+            return None
+        try:
+            if is_game_related(path, config.get("strict_game_exclusion", True)):
+                return None
+            stat = path.stat()
+            size_mb = stat.st_size / (1024 ** 2)
+            if size_mb < config.get("min_size", 0):
+                return None
+            age_days = (time.time() - stat.st_mtime) / 86400
+            if age_days < config.get("min_age", 0):
+                return None
+
+            dup = None
+            if size_mb >= 50:
+                h = hash_file(path)
+                dup = seen_hashes.get(h)
+                seen_hashes[h] = str(path)
+
+            return {
+                "Name": path.name,
+                "FullPath": str(path),
+                "SizeMB": round(size_mb, 2),
+                "LastModified": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(stat.st_mtime)),
+                "Score": score_file(path, stat, config.get("aggressive", False), config.get("extension_weights", {})),
+                "DuplicateOf": dup
+            }
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(MAX_WORKERS) as pool:
+        futures = [pool.submit(worker, f) for f in files]
+        for i, fut in enumerate(as_completed(futures), 1):
+            if progress_cb and i % 50 == 0:
+                progress_cb(i, total)
             r = fut.result()
             if r:
                 results.append(r)
-    return results
 
-def main():
-    parser = argparse.ArgumentParser(description="BytePurge CLI Scanner")
-    parser.add_argument("folder", type=Path, help="Target folder to scan")
-    parser.add_argument("--json", action="store_true", help="Output results as JSON")
-    parser.add_argument("--min-score", type=float, default=0.0, help="Filter files below this score")
-    parser.add_argument("--min-age", type=int, default=0, help="Minimum file age in days")
-    parser.add_argument("--min-size", type=float, default=0.0, help="Minimum file size in MB")
-    parser.add_argument("--aggressive", action="store_true", help="Score all extensions aggressively")
-    args = parser.parse_args()
-
-    folder = args.folder.resolve()
-    if not folder.is_dir():
-        sys.stderr.write(f"Error: '{folder}' is not a directory\n")
-        sys.exit(1)
-
-    results = scan_folder(folder, args.min_age, args.min_size, args.aggressive)
-    results = [r for r in results if r["Score"] >= args.min_score]
-    results.sort(key=lambda r: -r["Score"])
-
-    if args.json:
-        print(json.dumps(results, indent=2))
-    else:
-        writer = csv.DictWriter(
-            sys.stdout,
-            fieldnames=["Name", "FullPath", "SizeMB", "LastModified", "Score"]
-        )
-        writer.writeheader()
-        for row in results:
-            writer.writerow(row)
-
-if __name__ == "__main__":
-    main()
+    return sorted(results, key=lambda x: -x["Score"])
